@@ -68,9 +68,10 @@ app.get('/api/wallet-balance', async (req, res) => {
           decimals: item.token_info.decimals || 0,
         },
       }))
-      .filter(token => token.tokenAmount.uiAmount > 0); // Double check uiAmount is positive
+      .filter(token => token.tokenAmount.uiAmount > 0)
+      .sort((a, b) => b.tokenAmount.uiAmount - a.tokenAmount.uiAmount); // Sort by balance descending
 
-    console.log(`✅ Returning ${tokens.length} tokens with positive balance`);
+    console.log(`✅ Returning ${tokens.length} tokens with positive balance (sorted by balance)`);
     res.json({ tokens });
     
   } catch (error) {
