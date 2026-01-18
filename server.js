@@ -74,6 +74,7 @@ app.get('/api/wallet-balance', async (req, res) => {
     console.log(`Found ${allTokens.length} tokens with positive balance`);
 
     // Fetch prices from DexScreener for ALL tokens (in chunks of 30)
+    // Add delay to avoid rate limiting
     const tokenAddresses = allTokens.map(t => t.tokenAddress);
     const chunks = [];
     for (let i = 0; i < tokenAddresses.length; i += 30) {
@@ -81,8 +82,14 @@ app.get('/api/wallet-balance', async (req, res) => {
     }
 
     const allPrices = [];
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
       try {
+        // Add delay between requests (except first one)
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+        }
+        
         const priceResponse = await fetch(
           `https://api.dexscreener.com/latest/dex/tokens/solana/${chunk.join(',')}`
         );
@@ -91,10 +98,13 @@ app.get('/api/wallet-balance', async (req, res) => {
           const priceData = await priceResponse.json();
           if (priceData.pairs && Array.isArray(priceData.pairs)) {
             allPrices.push(...priceData.pairs);
+            console.log(`Chunk ${i + 1}/${chunks.length}: Got ${priceData.pairs.length} pairs`);
           }
+        } else {
+          console.log(`Chunk ${i + 1}/${chunks.length}: ${priceResponse.status} - skipping`);
         }
       } catch (err) {
-        console.error('Error fetching prices:', err);
+        console.error(`Chunk ${i + 1}: Error fetching prices:`, err.message);
       }
     }
 
@@ -114,12 +124,14 @@ app.get('/api/wallet-balance', async (req, res) => {
       const usdValue = token.tokenAmount.uiAmount * price;
       
       return { ...token, usdValue };
-    }).sort((a, b) => b.usdValue - a.usdValue); // Sort by USD value descending
+    })
+    .filter(token => token.usdValue >= 10) // Only tokens worth $10 or more
+    .sort((a, b) => b.usdValue - a.usdValue); // Sort by USD value descending
 
-    // Return top 100 by value
-    const topTokens = tokensWithValue.slice(0, 100).map(({ usdValue, ...token }) => token);
+    // Return all tokens worth $10+
+    const topTokens = tokensWithValue.map(({ usdValue, ...token }) => token);
 
-    console.log(`✅ Returning top ${topTokens.length} tokens sorted by USD value`);
+    console.log(`✅ Returning ${topTokens.length} tokens worth $10+ (sorted by USD value)`);
     res.json({ tokens: topTokens });
     
   } catch (error) {
