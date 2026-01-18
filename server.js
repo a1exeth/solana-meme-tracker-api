@@ -73,36 +73,42 @@ app.get('/api/wallet-balance', async (req, res) => {
 
     console.log(`Found ${allTokens.length} tokens with positive balance`);
 
-    // Fetch prices from Jupiter API for ALL tokens
+    // Fetch prices from Jupiter API in chunks (100 tokens per request)
     const tokenAddresses = allTokens.map(t => t.tokenAddress);
+    const chunks = [];
+    for (let i = 0; i < tokenAddresses.length; i += 100) {
+      chunks.push(tokenAddresses.slice(i, i + 100));
+    }
     
-    console.log('Fetching prices from Jupiter API...');
+    console.log(`Fetching prices from Jupiter API in ${chunks.length} chunks...`);
     
     const allPrices = {};
-    try {
-      // Jupiter accepts comma-separated token addresses
-      const response = await fetch(
-        `https://api.jup.ag/price/v2?ids=${tokenAddresses.join(',')}`
-      );
-      
-      if (response.ok) {
-        const priceData = await response.json();
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      try {
+        const response = await fetch(
+          `https://api.jup.ag/price/v2?ids=${chunk.join(',')}`
+        );
         
-        // Jupiter returns: { data: { "tokenAddress": { price: 0.123 } } }
-        if (priceData.data) {
-          Object.entries(priceData.data).forEach(([address, info]) => {
-            allPrices[address.toLowerCase()] = parseFloat(info.price || 0);
-          });
-          console.log(`Got prices for ${Object.keys(allPrices).length} tokens from Jupiter`);
+        if (response.ok) {
+          const priceData = await response.json();
+          
+          // Jupiter returns: { data: { "tokenAddress": { price: 0.123 } } }
+          if (priceData.data) {
+            Object.entries(priceData.data).forEach(([address, info]) => {
+              allPrices[address.toLowerCase()] = parseFloat(info.price || 0);
+            });
+            console.log(`Chunk ${i + 1}/${chunks.length}: Got ${Object.keys(priceData.data).length} prices`);
+          }
+        } else {
+          console.error(`Chunk ${i + 1}/${chunks.length}: Jupiter API error: ${response.status}`);
         }
-      } else {
-        console.error(`Jupiter API error: ${response.status}`);
+      } catch (err) {
+        console.error(`Chunk ${i + 1}: Error fetching prices:`, err.message);
       }
-    } catch (err) {
-      console.error('Error fetching prices from Jupiter:', err.message);
     }
 
-    console.log(`Successfully fetched ${Object.keys(allPrices).length} prices`);
+    console.log(`Successfully fetched ${Object.keys(allPrices).length} prices from Jupiter`);
 
     // Calculate USD values and sort by value
     const tokensWithValue = allTokens.map(token => {
