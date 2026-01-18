@@ -85,16 +85,34 @@ app.get('/api/wallet-balance', async (req, res) => {
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       try {
-        // Add delay between requests (except first one)
+        // Add 2 second delay between requests (except first one)
         if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
         }
         
         const priceResponse = await fetch(
           `https://api.dexscreener.com/latest/dex/tokens/solana/${chunk.join(',')}`
         );
         
-        if (priceResponse.ok) {
+        if (priceResponse.status === 429) {
+          console.log(`Chunk ${i + 1}/${chunks.length}: Rate limited (429) - waiting 5s and retrying`);
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+          
+          // Retry once
+          const retryResponse = await fetch(
+            `https://api.dexscreener.com/latest/dex/tokens/solana/${chunk.join(',')}`
+          );
+          
+          if (retryResponse.ok) {
+            const priceData = await retryResponse.json();
+            if (priceData.pairs && Array.isArray(priceData.pairs)) {
+              allPrices.push(...priceData.pairs);
+              console.log(`Chunk ${i + 1}/${chunks.length}: Retry succeeded - Got ${priceData.pairs.length} pairs`);
+            }
+          } else {
+            console.log(`Chunk ${i + 1}/${chunks.length}: Retry failed - ${retryResponse.status}`);
+          }
+        } else if (priceResponse.ok) {
           const priceData = await priceResponse.json();
           if (priceData.pairs && Array.isArray(priceData.pairs)) {
             allPrices.push(...priceData.pairs);
