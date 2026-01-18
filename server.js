@@ -73,65 +73,56 @@ app.get('/api/wallet-balance', async (req, res) => {
 
     console.log(`Found ${allTokens.length} tokens with positive balance`);
 
-    // Fetch prices from Jupiter API in chunks (100 tokens per request)
-    const tokenAddresses = allTokens.map(t => t.tokenAddress);
-    const chunks = [];
-    for (let i = 0; i < tokenAddresses.length; i += 100) {
-      chunks.push(tokenAddresses.slice(i, i + 100));
-    }
-    
-    console.log(`Fetching prices from Jupiter API in ${chunks.length} chunks...`);
-    
+    // Sort tokens by balance (largest first) to prioritize checking valuable tokens
+    allTokens.sort((a, b) => b.tokenAmount.uiAmount - a.tokenAmount.uiAmount);
+
+    // Fetch prices from DexScreener in small batches
+    // Stop early once we have enough tokens worth $10+
     const allPrices = {};
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
+    const batchSize = 20; // Smaller batches
+    let tokensFound = 0;
+    const targetTokens = 50; // Stop after finding 50 valuable tokens
+    
+    console.log('Fetching prices from DexScreener (smart batching)...');
+    
+    for (let i = 0; i < allTokens.length && tokensFound < targetTokens; i += batchSize) {
+      const batch = allTokens.slice(i, i + batchSize);
+      const addresses = batch.map(t => t.tokenAddress).join(',');
+      
       try {
+        // Small delay to avoid rate limits
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+        
         const response = await fetch(
-          `https://api.jup.ag/price/v2?ids=${chunk.join(',')}`
+          `https://api.dexscreener.com/latest/dex/tokens/${addresses}`
         );
         
         if (response.ok) {
-          const priceData = await response.json();
+          const data = await response.json();
           
-          // Jupiter returns: { data: { "tokenAddress": { price: 0.123 } } }
-          if (priceData.data) {
-            Object.entries(priceData.data).forEach(([address, info]) => {
-              allPrices[address.toLowerCase()] = parseFloat(info.price || 0);
+          if (data.pairs && Array.isArray(data.pairs)) {
+            // Group pairs by token address
+            data.pairs.forEach(pair => {
+              const addr = pair.baseToken?.address?.toLowerCase();
+              if (addr && pair.priceUsd) {
+                allPrices[addr] = {
+                  price: parseFloat(pair.priceUsd),
+                  change24h: pair.priceChange?.h24 || 0,
+                  name: pair.baseToken.name,
+                  symbol: pair.baseToken.symbol,
+                  icon: pair.info?.imageUrl
+                };
+              }
             });
-            console.log(`Chunk ${i + 1}/${chunks.length}: Got ${Object.keys(priceData.data).length} prices`);
-          }
-        } else {
-          console.error(`Chunk ${i + 1}/${chunks.length}: Jupiter API error: ${response.status}`);
-        }
-      } catch (err) {
-        console.error(`Chunk ${i + 1}: Error fetching prices:`, err.message);
-      }
-    }
-
-    console.log(`Successfully fetched ${Object.keys(allPrices).length} prices from Jupiter`);
-
-    // Calculate USD values and sort by value
-    const tokensWithValue = allTokens.map(token => {
-      const price = allPrices[token.tokenAddress.toLowerCase()] || 0;
-      const usdValue = token.tokenAmount.uiAmount * price;
-      
-      return { ...token, usdValue };
-    })
-    .filter(token => token.usdValue >= 10) // Only tokens worth $10 or more
-    .sort((a, b) => b.usdValue - a.usdValue); // Sort by USD value descending
-
-    // Return all tokens worth $10+
-    const topTokens = tokensWithValue.map(({ usdValue, ...token }) => token);
-
-    console.log(`✅ Returning ${topTokens.length} tokens worth $10+ (sorted by USD value)`);
-    res.json({ tokens: topTokens });
-    
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+            
+            // Count how many valuable tokens we found in this batch
+            batch.forEach(token => {
+              const price = allPrices[token.tokenAddress.toLowerCase()];
+              if (price && (token.tokenAmount.uiAmount * price.price) >= 10) {
+                tokensFound++;
+              }
+            });
+            
+            console.log(`Batch ${Math.floor(i/batchSize) + 1}: Got ${data.pairs.length} pairs, ${tokensFound} valuable tokens found so far`);
