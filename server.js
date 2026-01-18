@@ -73,72 +73,40 @@ app.get('/api/wallet-balance', async (req, res) => {
 
     console.log(`Found ${allTokens.length} tokens with positive balance`);
 
-    // Fetch prices from DexScreener for ALL tokens (in chunks of 30)
-    // Add delay to avoid rate limiting
+    // Fetch prices from Jupiter API for ALL tokens
     const tokenAddresses = allTokens.map(t => t.tokenAddress);
-    const chunks = [];
-    for (let i = 0; i < tokenAddresses.length; i += 30) {
-      chunks.push(tokenAddresses.slice(i, i + 30));
-    }
-
-    const allPrices = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      try {
-        // Add 2 second delay between requests (except first one)
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
-        }
+    
+    console.log('Fetching prices from Jupiter API...');
+    
+    const allPrices = {};
+    try {
+      // Jupiter accepts comma-separated token addresses
+      const response = await fetch(
+        `https://api.jup.ag/price/v2?ids=${tokenAddresses.join(',')}`
+      );
+      
+      if (response.ok) {
+        const priceData = await response.json();
         
-        const priceResponse = await fetch(
-          `https://api.dexscreener.com/latest/dex/tokens/solana/${chunk.join(',')}`
-        );
-        
-        if (priceResponse.status === 429) {
-          console.log(`Chunk ${i + 1}/${chunks.length}: Rate limited (429) - waiting 5s and retrying`);
-          await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-          
-          // Retry once
-          const retryResponse = await fetch(
-            `https://api.dexscreener.com/latest/dex/tokens/solana/${chunk.join(',')}`
-          );
-          
-          if (retryResponse.ok) {
-            const priceData = await retryResponse.json();
-            if (priceData.pairs && Array.isArray(priceData.pairs)) {
-              allPrices.push(...priceData.pairs);
-              console.log(`Chunk ${i + 1}/${chunks.length}: Retry succeeded - Got ${priceData.pairs.length} pairs`);
-            }
-          } else {
-            console.log(`Chunk ${i + 1}/${chunks.length}: Retry failed - ${retryResponse.status}`);
-          }
-        } else if (priceResponse.ok) {
-          const priceData = await priceResponse.json();
-          if (priceData.pairs && Array.isArray(priceData.pairs)) {
-            allPrices.push(...priceData.pairs);
-            console.log(`Chunk ${i + 1}/${chunks.length}: Got ${priceData.pairs.length} pairs`);
-          }
-        } else {
-          console.log(`Chunk ${i + 1}/${chunks.length}: ${priceResponse.status} - skipping`);
+        // Jupiter returns: { data: { "tokenAddress": { price: 0.123 } } }
+        if (priceData.data) {
+          Object.entries(priceData.data).forEach(([address, info]) => {
+            allPrices[address.toLowerCase()] = parseFloat(info.price || 0);
+          });
+          console.log(`Got prices for ${Object.keys(allPrices).length} tokens from Jupiter`);
         }
-      } catch (err) {
-        console.error(`Chunk ${i + 1}: Error fetching prices:`, err.message);
+      } else {
+        console.error(`Jupiter API error: ${response.status}`);
       }
+    } catch (err) {
+      console.error('Error fetching prices from Jupiter:', err.message);
     }
 
-    console.log(`Got ${allPrices.length} price pairs from DexScreener`);
+    console.log(`Successfully fetched ${Object.keys(allPrices).length} prices`);
 
     // Calculate USD values and sort by value
     const tokensWithValue = allTokens.map(token => {
-      const pair = allPrices.find(p => 
-        p.baseToken.address.toLowerCase() === token.tokenAddress.toLowerCase()
-      );
-      
-      if (!pair) {
-        return { ...token, usdValue: 0 };
-      }
-
-      const price = parseFloat(pair.priceUsd || 0);
+      const price = allPrices[token.tokenAddress.toLowerCase()] || 0;
       const usdValue = token.tokenAmount.uiAmount * price;
       
       return { ...token, usdValue };
