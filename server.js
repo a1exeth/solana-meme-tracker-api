@@ -59,7 +59,8 @@ app.get('/api/wallet-balance', async (req, res) => {
       return res.status(400).json({ error: data.error.message });
     }
 
-    const tokens = data.result.items
+    // Get all tokens with balance
+    const allTokens = data.result.items
       .filter(item => item.token_info && item.token_info.balance > 0)
       .map(item => ({
         tokenAddress: item.id,
@@ -68,11 +69,58 @@ app.get('/api/wallet-balance', async (req, res) => {
           decimals: item.token_info.decimals || 0,
         },
       }))
-      .filter(token => token.tokenAmount.uiAmount > 0)
-      .sort((a, b) => b.tokenAmount.uiAmount - a.tokenAmount.uiAmount); // Sort by balance descending
+      .filter(token => token.tokenAmount.uiAmount > 0);
 
-    console.log(`✅ Returning ${tokens.length} tokens with positive balance (sorted by balance)`);
-    res.json({ tokens });
+    console.log(`Found ${allTokens.length} tokens with positive balance`);
+
+    // Fetch prices from DexScreener for ALL tokens (in chunks of 30)
+    const tokenAddresses = allTokens.map(t => t.tokenAddress);
+    const chunks = [];
+    for (let i = 0; i < tokenAddresses.length; i += 30) {
+      chunks.push(tokenAddresses.slice(i, i + 30));
+    }
+
+    const allPrices = [];
+    for (const chunk of chunks) {
+      try {
+        const priceResponse = await fetch(
+          `https://api.dexscreener.com/latest/dex/tokens/solana/${chunk.join(',')}`
+        );
+        
+        if (priceResponse.ok) {
+          const priceData = await priceResponse.json();
+          if (priceData.pairs && Array.isArray(priceData.pairs)) {
+            allPrices.push(...priceData.pairs);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching prices:', err);
+      }
+    }
+
+    console.log(`Got ${allPrices.length} price pairs from DexScreener`);
+
+    // Calculate USD values and sort by value
+    const tokensWithValue = allTokens.map(token => {
+      const pair = allPrices.find(p => 
+        p.baseToken.address.toLowerCase() === token.tokenAddress.toLowerCase()
+      );
+      
+      if (!pair) {
+        return { ...token, usdValue: 0 };
+      }
+
+      const price = parseFloat(pair.priceUsd || 0);
+      const usdValue = token.tokenAmount.uiAmount * price;
+      
+      return { ...token, usdValue };
+    }).sort((a, b) => b.usdValue - a.usdValue); // Sort by USD value descending
+
+    // Return top 100 by value
+    const topTokens = tokensWithValue.slice(0, 100).map(({ usdValue, ...token }) => token);
+
+    console.log(`✅ Returning top ${topTokens.length} tokens sorted by USD value`);
+    res.json({ tokens: topTokens });
     
   } catch (error) {
     console.error('Error:', error);
