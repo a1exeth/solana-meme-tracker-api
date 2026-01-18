@@ -77,11 +77,11 @@ app.get('/api/wallet-balance', async (req, res) => {
     allTokens.sort((a, b) => b.tokenAmount.uiAmount - a.tokenAmount.uiAmount);
 
     // Fetch prices from DexScreener in small batches
-    // Stop early once we have enough tokens worth $10+
+    // Stop early once we have enough tokens worth $1+
     const allPrices = {};
     const batchSize = 20; // Smaller batches
     let tokensFound = 0;
-    const targetTokens = 50; // Stop after finding 50 valuable tokens
+    const targetTokens = 100; // Stop after finding 100 valuable tokens
     
     console.log('Fetching prices from DexScreener (smart batching)...');
     
@@ -120,7 +120,7 @@ app.get('/api/wallet-balance', async (req, res) => {
             // Count how many valuable tokens we found in this batch
             batch.forEach(token => {
               const price = allPrices[token.tokenAddress.toLowerCase()];
-              if (price && (token.tokenAmount.uiAmount * price.price) >= 10) {
+              if (price && (token.tokenAmount.uiAmount * price.price) >= 1) { // Changed from $10 to $1
                 tokensFound++;
               }
             });
@@ -152,13 +152,13 @@ app.get('/api/wallet-balance', async (req, res) => {
       
       return { ...token, usdValue, priceInfo };
     })
-    .filter(token => token.usdValue >= 10) // Only tokens worth $10 or more
+    .filter(token => token.usdValue >= 1) // Only tokens worth $1 or more
     .sort((a, b) => b.usdValue - a.usdValue); // Sort by USD value descending
 
-    // Return all tokens worth $10+ with price info
+    // Return all tokens worth $1+ with price info
     const topTokens = tokensWithValue.map(({ usdValue, priceInfo, ...token }) => token);
 
-    console.log(`✅ Returning ${topTokens.length} tokens worth $10+ (sorted by USD value)`);
+    console.log(`✅ Returning ${topTokens.length} tokens worth $1+ (sorted by USD value)`);
     res.json({ tokens: topTokens });
     
   } catch (error) {
