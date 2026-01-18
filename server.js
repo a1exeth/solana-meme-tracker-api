@@ -126,3 +126,47 @@ app.get('/api/wallet-balance', async (req, res) => {
             });
             
             console.log(`Batch ${Math.floor(i/batchSize) + 1}: Got ${data.pairs.length} pairs, ${tokensFound} valuable tokens found so far`);
+          }
+        } else if (response.status === 429) {
+          console.log(`Batch ${Math.floor(i/batchSize) + 1}: Rate limited - waiting 3s`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          i -= batchSize; // Retry this batch
+        } else {
+          console.log(`Batch ${Math.floor(i/batchSize) + 1}: ${response.status} - skipping`);
+        }
+      } catch (err) {
+        console.error(`Batch error:`, err.message);
+      }
+    }
+
+    console.log(`Successfully fetched prices for ${Object.keys(allPrices).length} tokens`);
+
+    // Calculate USD values and sort by value
+    const tokensWithValue = allTokens.map(token => {
+      const priceInfo = allPrices[token.tokenAddress.toLowerCase()];
+      if (!priceInfo) {
+        return { ...token, usdValue: 0, priceInfo: null };
+      }
+      
+      const usdValue = token.tokenAmount.uiAmount * priceInfo.price;
+      
+      return { ...token, usdValue, priceInfo };
+    })
+    .filter(token => token.usdValue >= 10) // Only tokens worth $10 or more
+    .sort((a, b) => b.usdValue - a.usdValue); // Sort by USD value descending
+
+    // Return all tokens worth $10+ with price info
+    const topTokens = tokensWithValue.map(({ usdValue, priceInfo, ...token }) => token);
+
+    console.log(`✅ Returning ${topTokens.length} tokens worth $10+ (sorted by USD value)`);
+    res.json({ tokens: topTokens });
+    
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
