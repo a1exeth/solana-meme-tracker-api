@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: solana-meme-tracker-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: HELIUS_API_KEY
+        value: 5f3cf0ff-f2f2-4457-99ff-ef65124bbd33
